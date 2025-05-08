@@ -1,0 +1,13 @@
+{
+  "test_db": {
+    "users": {
+      "columns": [
+        "id",
+        "name",
+        "age"
+      ],
+      "tree_type": "avl",
+      "primary_key": "id"
+    }
+  }
+}
