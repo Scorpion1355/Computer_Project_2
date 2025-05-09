@@ -1,156 +1,118 @@
-""" Tree SQL """
-
 import argparse
 import shlex
+import re
 from data_manager import DataManager
 
 class TreeSQL:
+    ASSIGN_PATTERN = re.compile(r"(\w+)\s*=\s*('([^']*)'|\"([^\"]*)\"|[^ ]+)")
 
     def __init__(self):
-
         self.data_manager = DataManager()
 
-    def parse_command(self, command):
-
+    def parse_command(self, command: str):
         tokens = shlex.split(command)
         if not tokens:
-            return "Пуста команда"
+            return None
 
-        cmd = tokens[0].lower()
+        up = [t.upper() for t in tokens]
+        cmd = up[0]
 
-        if cmd == "create":
-            if len(tokens) >= 2 and tokens[1].lower() == "database":
+        if cmd == 'CREATE':
+            if up[1] == 'DATABASE':
                 return self.data_manager.create_database(tokens[2])
-            if len(tokens) >= 2 and tokens[1].lower() == "table":
-                return self.create_table_command(tokens[2:])
-        if cmd == "use":
+            if up[1] == 'TABLE':
+                return self._create_table(tokens)
+        if cmd == 'USE':
             return self.data_manager.use_database(tokens[1])
-        if cmd == "insert":
-            return self.insert_command(tokens)
-        if cmd == "select":
-            return self.select_command(tokens)
-        if cmd == "update":
-            return self.update_command(tokens)
-        if cmd == "delete":
-            return self.delete_command(tokens)
-        return "Невідома команда"
+        if cmd == 'INSERT':
+            return self._insert_into(tokens, up)
+        if cmd == 'SELECT':
+            return self._select_from(tokens, up)
+        if cmd == 'UPDATE':
+            return self._update_table(tokens, up)
+        if cmd == 'DELETE':
+            return self._delete_from(tokens, up)
 
-    def create_table_command(self, tokens):
+        return None
 
-        table_name = tokens[0]
-        tree_type = "avl"
-
-        if "using" in [t.lower() for t in tokens]:
-            idx = tokens.index("USING") if "USING" in tokens else tokens.index("using")
+    def _create_table(self, tokens):
+        low = [t.lower() for t in tokens]
+        name = tokens[2]
+        tree_type = 'avl'
+        if 'using' in low:
+            idx = low.index('using')
             tree_type = tokens[idx + 1]
+        start = low.index('(')
+        end = low.index(')')
+        cols = ' '.join(tokens[start+1:end]).split(',')
+        columns = [c.strip() for c in cols]
+        return self.data_manager.create_table(name, columns, tree_type)
 
-        col_start = tokens.index("(")
-        col_end = tokens.index(")")
-        columns_str = ' '.join(tokens[col_start + 1: col_end])
-        columns = [col.strip() for col in columns_str.split(",")]
+    def _insert_into(self, tokens, up):
+        name = tokens[2]
+        idx = up.index('VALUES')
+        vals_str = ' '.join(tokens[idx+1:]).strip('()')
+        raw = [v.strip().strip("'\"") for v in vals_str.split(',')]
+        values = [self._parse_value(v) for v in raw]
+        return self.data_manager.insert(name, values)
 
-        return self.data_manager.create_table(table_name, columns, tree_type)
+    def _select_from(self, tokens, up):
+        name = tokens[up.index('FROM')+1]
+        conditions = self._extract_conditions(tokens, up)
+        return self.data_manager.select(name, conditions)
 
-    def insert_command(self, tokens):
+    def _update_table(self, tokens, up):
+        name = tokens[1]
+        set_i = up.index('SET')
+        where_i = up.index('WHERE') if 'WHERE' in up else len(tokens)
+        assigns_str = ' '.join(tokens[set_i+1:where_i])
+        updates = self._parse_dict(assigns_str)
+        conditions = self._extract_conditions(tokens, up)
+        return self.data_manager.update(name, updates, conditions)
 
+    def _delete_from(self, tokens, up):
+        name = tokens[up.index('FROM')+1]
+        conditions = self._extract_conditions(tokens, up)
+        return self.data_manager.delete(name, conditions)
+
+    def _extract_conditions(self, tokens, up):
+        if 'WHERE' not in up:
+            return None
+        idx = up.index('WHERE')
+        cond_str = ' '.join(tokens[idx+1:])
+        return self._parse_dict(cond_str)
+
+    def _parse_dict(self, s: str):
+        s = s.replace('(', '').replace(')', '')
+        d = {}
+        for m in self.ASSIGN_PATTERN.finditer(s):
+            key = m.group(1)
+            val = m.group(3) or m.group(4) or m.group(2)
+            val = val.strip("'\"")
+            d[key] = self._parse_value(val)
+        return d if d else None
+
+    def _parse_value(self, v: str):
+        if v.isdigit():
+            return int(v)
         try:
-            table_name = tokens[2]
-            values_index = tokens.index("VALUES")
-            values_str = ' '.join(tokens[values_index + 1:])
-            values_str = values_str.strip("()")
-            raw_values = [v.strip() for v in values_str.split(",")]
-            parsed_values = [self._parse_value(v) for v in raw_values]
-            return self.data_manager.insert(table_name, parsed_values)
-
-        except Exception as e:
-            return f"Помилка вставки: {e}"
-
-    def select_command(self, tokens):
-
-        try:
-            from_index = tokens.index("FROM")
-            table_name = tokens[from_index + 1]
-
-            condition = None
-            if "WHERE" in [t.upper() for t in tokens]:
-                where_index = tokens.index("WHERE")
-                condition = ' '.join(tokens[where_index + 1:])
-
-            result = self.data_manager.select(table_name, condition)
-            return "\n".join(str(r) for r in result)
-
-        except Exception as e:
-            return f"Помилка SELECT: {e}"
-
-    def update_command(self, tokens):
-
-        try:
-            table_name = tokens[1]
-            set_index = tokens.index("SET")
-            where_index = tokens.index("WHERE") if "WHERE" in tokens else len(tokens)
-
-            update_tokens = tokens[set_index + 1: where_index]
-            updates = {}
-            for item in ' '.join(update_tokens).split(','):
-                field, value = item.split('=')
-                updates[field.strip()] = value.strip().strip("'\"")
-
-            condition = ' '.join(tokens[where_index + 1:]) if "WHERE" in tokens else None
-
-            return self.data_manager.update(table_name, updates, condition)
-
-        except Exception as e:
-            return f"Помилка UPDATE: {e}"
-
-    def delete_command(self, tokens):
-
-        try:
-            table_name = tokens[2]
-            condition = None
-            if "WHERE" in [t.upper() for t in tokens]:
-                where_index = tokens.index("WHERE")
-                condition = ' '.join(tokens[where_index + 1:])
-
-            return self.data_manager.delete(table_name, condition)
-
-        except Exception as e:
-            return f"Помилка DELETE: {e}"
-
-    def _parse_value(self, value):
-
-        if value.startswith("'") and value.endswith("'"):
-            return value.strip("'")
-        try:
-            return int(value)
+            return float(v)
         except ValueError:
-            try:
-                return float(value)
-            except ValueError:
-                return value
+            return v
 
-def main():
-
-    parser = argparse.ArgumentParser(description="Інтерфейс команд для роботи з TreeSQL")
-    parser.add_argument("--cmd", type=str, help="SQL-подібна команда")
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="TreeSQL CLI")
+    parser.add_argument('--cmd', type=str, help="SQL-like command")
     args = parser.parse_args()
-
     sql = TreeSQL()
-
     if args.cmd:
-        result = sql.parse_command(args.cmd)
-        print(result)
+        print(sql.parse_command(args.cmd))
     else:
-        print("Введіть команду або 'exit'):")
         while True:
             try:
-                command = input(">>> ")
-                if command.strip().lower() in ["exit", "quit"]:
+                line = input('>>> ')
+                if line.lower() in ('exit','quit'):
                     break
-                result = sql.parse_command(command)
-                print(result)
+                print(sql.parse_command(line))
             except KeyboardInterrupt:
-                print("\nВихід.")
                 break
-
-if __name__ == "__main__":
-    main()

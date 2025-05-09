@@ -1,5 +1,3 @@
-""" data manager """
-
 from tree_factory import TreeFactory
 import json
 import os
@@ -8,7 +6,6 @@ import pickle
 class DataManager:
     def __init__(self, db_dir="./db"):
         self.db_dir = db_dir
-
         self.databases = {}
         self.current_db = None
         self._init_storage()
@@ -53,7 +50,7 @@ class DataManager:
         db_meta[table_name] = {
             'columns': columns,
             'tree_type': tree_type,
-            'primary_key': primary_key,
+            'primary_key': primary_key
         }
         self._save_databases()
         tree = TreeFactory.create_tree(tree_type)
@@ -100,13 +97,11 @@ class DataManager:
         data_path = os.path.join(self.db_dir, self.current_db, f"{table_name}.json")
         with open(data_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        if not conditions:
+        if conditions is None:
             return data
-        result = []
-        for rec in data:
-            if all(rec.get(col) == val for col, val in conditions.items()):
-                result.append(rec)
-        return result
+        if not isinstance(conditions, dict):
+            raise TypeError("conditions must be a dict")
+        return [rec for rec in data if all(rec.get(col) == val for col, val in conditions.items())]
 
     def update(self, table_name, updates, conditions=None):
         if self.current_db is None:
@@ -114,6 +109,8 @@ class DataManager:
         db_meta = self.databases[self.current_db]
         if table_name not in db_meta:
             raise ValueError(f"Table '{table_name}' does not exist")
+        if not isinstance(updates, dict):
+            raise TypeError("updates must be a dict")
         meta = db_meta[table_name]
         pk = meta['primary_key']
         tree_path = os.path.join(self.db_dir, self.current_db, f"{table_name}.tree")
@@ -123,7 +120,7 @@ class DataManager:
         with open(data_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         for rec in data:
-            if not conditions or all(rec.get(col) == val for col, val in conditions.items()):
+            if conditions is None or all(rec.get(col) == val for col, val in conditions.items()):
                 old_key = rec[pk]
                 for col, val in updates.items():
                     rec[col] = val
@@ -152,6 +149,8 @@ class DataManager:
             data = json.load(f)
         new_data = []
         for rec in data:
+            if conditions is not None and not isinstance(conditions, dict):
+                raise TypeError("conditions must be a dict")
             if conditions and all(rec.get(col) == val for col, val in conditions.items()):
                 tree.delete(rec[pk])
             else:
